@@ -9,6 +9,7 @@ import sys
 import stat
 import time
 import subprocess
+import winreg
 
 # ============================ 目标清单（白名单） ============================
 def _home():
@@ -315,3 +316,96 @@ def wipe_free_space():
         return r.returncode == 0
     except Exception:
         return False
+
+
+# ============================ 强力卸载 ============================
+UNINSTALL_KEYWORDS = {
+    '微信':     ['wechat', '微信'],
+    'QQ':       ['腾讯qq', 'tencent qq', 'qq音乐'],
+    '企业微信': ['wxwork', '企业微信', 'wecom'],
+    '钉钉':     ['dingtalk', '钉钉'],
+    '飞书':     ['feishu', 'lark', '飞书'],
+    '夸克':     ['quark'],
+    '豆包':     ['doubao', '豆包'],
+    'Chrome':   ['google chrome'],
+}
+
+
+def _find_uninstall_info(app_name):
+    """在注册表 Uninstall 分支中查找应用的卸载命令行与安装位置。"""
+    keywords = UNINSTALL_KEYWORDS.get(app_name, [app_name])
+    kw_lower = [k.lower() for k in keywords]
+    reg_paths = [
+        (winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'),
+        (winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'),
+        (winreg.HKEY_CURRENT_USER,  r'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'),
+    ]
+    for hkey, path in reg_paths:
+        try:
+            key = winreg.OpenKey(hkey, path)
+            n = winreg.QueryInfoKey(key)[0]
+            for i in range(n):
+                sub_name = winreg.EnumKey(key, i)
+                sub_key = winreg.OpenKey(key, sub_name)
+                try:
+                    display = winreg.QueryValueEx(sub_key, 'DisplayName')[0]
+                except Exception:
+                    winreg.CloseKey(sub_key)
+                    continue
+                if any(k in display.lower() for k in kw_lower):
+                    info = {'DisplayName': display}
+                    for val in ('UninstallString', 'QuietUninstallString', 'InstallLocation'):
+                        try:
+                            info[val] = winreg.QueryValueEx(sub_key, val)[0]
+                        except Exception:
+                            pass
+                    winreg.CloseKey(sub_key)
+                    winreg.CloseKey(key)
+                    return info
+                winreg.CloseKey(sub_key)
+            winreg.CloseKey(key)
+        except Exception:
+            pass
+    return None
+
+
+def uninstall_app(app_name):
+    """执行强力卸载（静默模式），返回结果字典。"""
+    info = _find_uninstall_info(app_name)
+    if not info:
+        return {'status': 'not_found', 'message': '未在注册表中找到卸载信息'}
+    cmd = info.get('QuietUninstallString') or info.get('UninstallString')
+    if not cmd:
+        return {'status': 'no_cmd', 'message': '未找到卸载命令'}
+    try:
+        # 静默化 msiexec 命令
+        if 'msiexec' in cmd.lower():
+            cmd = cmd.replace('/I', '/X').replace('/i', '/X')
+            if '/quiet' not in cmd:
+                cmd += ' /quiet /norestart'
+        # 静默化常见卸载器
+        elif cmd.lower().endswith('.exe'):
+            if '/S' not in cmd and '/VERYSILENT' not in cmd:
+                cmd += ' /S'
+        subprocess.run(cmd, shell=True, timeout=120, capture_output=True)
+        # 等待卸载完成
+        time.sleep(3)
+        # 检查安装目录是否残留，若残留则强制删除
+        install_dir = info.get('InstallLocation')
+        if install_dir and os.path.isdir(install_dir):
+            try:
+                for root, dirs, files in os.walk(install_dir, topdown=False):
+                    for d in dirs:
+                        _clear_attrs(os.path.join(root, d))
+                    for f in files:
+                        _clear_attrs(os.path.join(root, f))
+                _clear_attrs(install_dir)
+                import shutil
+                shutil.rmtree(install_dir, ignore_errors=True)
+            except Exception:
+                pass
+        return {'status': 'ok', 'message': '卸载已执行: %s' % info.get('DisplayName', app_name)}
+    except subprocess.TimeoutExpired:
+        return {'status': 'timeout', 'message': '卸载超时'}
+    except Exception as e:
+        return {'status': 'error', 'message': str(e)}

@@ -317,6 +317,16 @@ class OffboardGUI:
                               fill='white', width=2, tags=tag)
                 c.create_line(bx1 + 9, by2 - 5, bx2 - 5, by1 + 4,
                               fill='white', width=2, tags=tag)
+            # 强力卸载按钮（红色小胶囊）
+            utag = 'uninst%d' % i
+            ux1, uy1, ux2, uy2 = bx1 - 60, by1, bx1 - 6, by2
+            rounded_rect(c, ux1, uy1, ux2, uy2, 7, fill='#FFF0F0',
+                         outline='#F0A0A0', width=1, tags=utag)
+            c.create_text((ux1 + ux2) / 2, (uy1 + uy2) / 2, text='卸载',
+                          fill=DANGER, font=('Microsoft YaHei UI', 8, 'bold'), tags=utag)
+            c.tag_bind(utag, '<Button-1>', lambda e, idx=i: self._uninstall_card(idx))
+            c.tag_bind(utag, '<Enter>', lambda e, t=utag: c.itemconfig(t, fill='#FFE0E0'))
+            c.tag_bind(utag, '<Leave>', lambda e, t=utag: c.itemconfig(t, fill='#FFF0F0'))
             c.tag_bind(tag, '<Button-1>', lambda e, idx=i: self._toggle_card(idx))
             y += base_h + 12
 
@@ -381,6 +391,16 @@ class OffboardGUI:
         g = self.groups[idx]
         self.checked[g['name']] = not self.checked.get(g['name'], True)
         self._redraw_all()
+
+    def _uninstall_card(self, idx):
+        g = self.groups[idx]
+        name = g['name']
+        self._toast('正在卸载 %s …' % name)
+        threading.Thread(target=self._uninstall_worker, args=(name,), daemon=True).start()
+
+    def _uninstall_worker(self, app_name):
+        result = core.uninstall_app(app_name)
+        self.q.put(('uninstall_done', app_name, result))
 
     # ================= 动画引擎 =================
     def _start_anim(self):
@@ -589,6 +609,14 @@ class OffboardGUI:
         elif kind == 'kill_done':
             killed = msg[1]
             self._toast('已结束进程：' + '、'.join(killed[:5]) + (' 等' if len(killed) > 5 else '') if killed else '未检测到相关进程')
+        elif kind == 'uninstall_done':
+            name, result = msg[1], msg[2]
+            if result['status'] == 'ok':
+                self._toast('%s 卸载完成' % name)
+            elif result['status'] == 'not_found':
+                self._toast('%s：未找到注册表卸载信息' % name)
+            else:
+                self._toast('%s 卸载失败: %s' % (name, result.get('message', '')))
         elif kind == 'toast':
             self._toast(msg[1])
         elif kind == 'clean_item':
