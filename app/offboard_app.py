@@ -36,14 +36,32 @@ def _documents():
     return d
 
 APP_TARGETS = [
-    ('微信（新版数据）',         os.path.join(_appdata(), 'Tencent', 'xwechat')),
-    ('微信（配置）',             os.path.join(_appdata(), 'Tencent', 'WeChat')),
-    ('微信（旧版聊天记录）',     os.path.join(_documents(), 'WeChat Files')),
-    ('微信（聊天文件）',         os.path.join(_documents(), 'xwechat_files')),
-    ('QQ（配置/数据）',          os.path.join(_appdata(), 'Tencent', 'QQ')),
-    ('QQ（聊天记录）',           os.path.join(_documents(), 'Tencent Files')),
+    # 微信
+    ('微信（新版数据）',          os.path.join(_appdata(), 'Tencent', 'xwechat')),
+    ('微信（配置）',              os.path.join(_appdata(), 'Tencent', 'WeChat')),
+    ('微信（旧版聊天记录）',      os.path.join(_documents(), 'WeChat Files')),
+    ('微信（聊天文件）',          os.path.join(_documents(), 'xwechat_files')),
+    # QQ
+    ('QQ（配置/数据）',           os.path.join(_appdata(), 'Tencent', 'QQ')),
+    ('QQ（聊天记录）',            os.path.join(_documents(), 'Tencent Files')),
+    # 企业微信
     ('企业微信（聊天记录/文件）', os.path.join(_documents(), 'WXWork')),
-    ('企业微信（配置）',         os.path.join(_appdata(), 'Tencent', 'WXWork')),
+    ('企业微信（配置）',          os.path.join(_appdata(), 'Tencent', 'WXWork')),
+    # 钉钉
+    ('钉钉（配置/缓存）',         os.path.join(_appdata(), 'DingTalk')),
+    ('钉钉（本地数据）',          os.path.join(_localappdata(), 'DingTalk')),
+    ('钉钉（聊天文件）',          os.path.join(_documents(), 'DingTalk')),
+    # 飞书 国内版
+    ('飞书（配置）',              os.path.join(_appdata(), 'Feishu')),
+    ('飞书（本地数据）',          os.path.join(_localappdata(), 'Feishu')),
+    ('飞书（聊天文件）',          os.path.join(_documents(), 'Feishu')),
+    # 飞书/Lark 国际版
+    ('飞书 Lark（数据）',         os.path.join(_appdata(), 'LarkShell')),
+    ('飞书 Lark（本地缓存）',     os.path.join(_localappdata(), 'LarkShell')),
+    ('飞书 Lark（聊天文件）',     os.path.join(_documents(), 'Lark')),
+    # 飞书 缓存
+    ('飞书（缓存）',              os.path.join(_appdata(), 'Lark')),
+    ('飞书（本地缓存）',          os.path.join(_localappdata(), 'Lark')),
 ]
 
 BROWSER_FILE_NAMES = [
@@ -63,6 +81,8 @@ BROWSER_PROFILES = ['Default', 'Profile 1', 'Profile 2', 'Profile 3']
 PROC_NAMES = ['WeChat', 'Weixin', 'WeChatAppEx', 'WeChatApp', 'WeixinAppEx',
               'QQ', 'QQExternal', 'QQProtect', 'QQMusic',
               'WXWork', 'WXWorkUpdate', 'WXWorkWeb',
+              'DingTalk', 'DingTalkGov', 'DingTalkHelper',
+              'Feishu', 'Lark', 'LarkShell', 'FeiShuIM',
               'chrome', 'msedge']
 
 # ============================ 基础工具 ============================
@@ -142,6 +162,9 @@ def group_targets(targets):
     order = []
     for t in targets:
         key = t['app'].split(' / ')[0] if t['type'] == 'file' else t['app'].split('（')[0]
+        # 飞书 Lark 国际版归入「飞书」大类
+        if key == '飞书 Lark':
+            key = '飞书'
         if key not in groups:
             groups[key] = {'name': key, 'size_mb': 0.0, 'targets': 0, 'paths': []}
             order.append(key)

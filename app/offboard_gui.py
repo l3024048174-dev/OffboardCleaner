@@ -34,6 +34,7 @@ FONT_T    = ('Microsoft YaHei UI', 16, 'bold')
 APP_COLORS = {
     '微信': '#07C160', 'QQ': '#12B7F5', '企业微信': '#1E6FFF',
     'Chrome': '#FBBC04', 'Edge': '#0F6CBD',
+    '钉钉': '#0089FF', '飞书': '#3370FF',
 }
 
 

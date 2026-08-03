@@ -13,6 +13,9 @@ spec*/
 *.log
 _*.txt
 app_debug.log
+*.exe
+patch_release.py
+app/ui.html
 
 # 虚拟环境
 .venv/
