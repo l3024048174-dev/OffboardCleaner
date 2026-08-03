@@ -62,6 +62,12 @@ APP_TARGETS = [
     # 飞书 缓存
     ('飞书（缓存）',              os.path.join(_appdata(), 'Lark')),
     ('飞书（本地缓存）',          os.path.join(_localappdata(), 'Lark')),
+    # 夸克
+    ('夸克（配置）',              os.path.join(_appdata(), 'Quark')),
+    ('夸克（用户数据）',          os.path.join(_localappdata(), 'Quark')),
+    # 豆包
+    ('豆包（配置）',              os.path.join(_appdata(), 'doubao')),
+    ('豆包（用户数据）',          os.path.join(_localappdata(), 'doubao')),
 ]
 
 BROWSER_FILE_NAMES = [
@@ -83,6 +89,7 @@ PROC_NAMES = ['WeChat', 'Weixin', 'WeChatAppEx', 'WeChatApp', 'WeixinAppEx',
               'WXWork', 'WXWorkUpdate', 'WXWorkWeb',
               'DingTalk', 'DingTalkGov', 'DingTalkHelper',
               'Feishu', 'Lark', 'LarkShell', 'FeiShuIM',
+              'Quark', 'QuarkBrowser', 'doubao', 'DouBao',
               'chrome', 'msedge']
 
 # ============================ 基础工具 ============================

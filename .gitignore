@@ -15,6 +15,7 @@ _*.txt
 app_debug.log
 *.exe
 patch_release.py
+release_*.py
 app/ui.html
 
 # 虚拟环境
