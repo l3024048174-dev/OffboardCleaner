@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# PyInstaller 构建产物
+build*/
+dist*/
+spec*/
+*.spec
+
+# 运行时日志与临时文件
+*.log
+_*.txt
+app_debug.log
+
+# 虚拟环境
+.venv/
+envs/
+
+# 系统文件
+Thumbs.db
+Desktop.ini
