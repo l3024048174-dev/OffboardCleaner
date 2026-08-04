@@ -363,77 +363,103 @@ class OffboardGUI:
         threading.Thread(target=lambda: self.q.put(('uninstall_done',n,core.uninstall_app(n))),
                         daemon=True).start()
 
-    # ==================== 弹性动画引擎 ====================
+    # ==================== 动画引擎（ease-out · 收敛 · 短时长） ====================
     def _start_anim(self):
         if not self.anim_running: self.anim_running=True; self._animate()
 
+    def _ease_out(self, t):
+        """三次 ease-out。t ∈ [0,1] → [0,1]（速度递减）。"""
+        return 1 - (1 - t) ** 3
+
+    def _tick_to(self, key, vel_attr, goal, t_inc, threshold):
+        """通用平滑插值到 goal，自动夹紧收敛。"""
+        cur = getattr(self, key)
+        vel = getattr(self, vel_attr)
+        if abs(cur - goal) < threshold:
+            cur = goal; vel = 0
+        else:
+            # ease-out 累进
+            cur += (goal - cur) * t_inc
+        setattr(self, key, cur)
+        setattr(self, vel_attr, vel)
+
     def _animate(self):
         now=time.time(); n=len(self.groups)
-        # ---- 进入动画：生长弧 ----
-        if getattr(self,'_enter_time',0):
-            elapsed=now-self._enter_time; all_done=True
-            for i in range(n):
-                delay=i*0.06; dur=0.55
-                t=max(0,min(1,(elapsed-delay)/dur))
-                goal=1.0; cur=self.enter_grow.get(i,0.0)
-                vel=self.enter_grow_v.get(i,0.0)
-                cur2,vel2=spring_tick(cur,vel,goal,stiffness=0.22,damping=0.72)
-                if abs(cur2-goal)<0.003 and abs(vel2)<0.01:
-                    cur2=goal; vel2=0
-                self.enter_grow[i]=cur2; self.enter_grow_v[i]=vel2
-                if cur2<0.98: all_done=False
-            if all_done: self._enter_time=0
+        still_active = False
 
-        # ---- 段偏移（悬停） ----
+        # ---- 进入动画：生长弧（一次性短时长） ----
+        enter_t = getattr(self, '_enter_time', 0)
+        if enter_t:
+            elapsed = now - enter_t
+            ENTER_DUR = 0.35  # 全部完成不超过 0.35s
+            all_done = True
+            for i in range(n):
+                delay = i * 0.025          # stagger 缩短到 25ms/段
+                t = (elapsed - delay) / ENTER_DUR
+                if t < 0:   v = 0.0
+                elif t > 1: v = 1.0
+                else:       v = self._ease_out(t)
+                self.enter_grow[i] = v
+                self.enter_grow_v[i] = 0
+                if v < 0.999: all_done = False
+            if all_done: self._enter_time = 0
+
+        # ---- 段偏移（悬停 / 快速收敛） ----
         for i in range(n):
-            goal=4.0 if self.hover_seg==i else 0.0
-            cur=self.seg_offset.get(i,0.0); vel=self.seg_offset_v.get(i,0.0)
-            cur2,vel2=spring_tick(cur,vel,goal,stiffness=0.25,damping=0.70)
-            if abs(cur2-goal)<0.01 and abs(vel2)<0.01: cur2=goal; vel2=0
-            self.seg_offset[i]=cur2; self.seg_offset_v[i]=vel2
+            goal = 2.5 if self.hover_seg == i else 0.0
+            cur = self.seg_offset.get(i, 0.0)
+            vel = self.seg_offset_v.get(i, 0.0)
+            new_cur = cur + (goal - cur) * 0.35   # 大步插值 → 快速到位
+            if abs(new_cur - goal) < 0.01:
+                new_cur = goal; vel = 0
+            else: vel = (goal - cur) * 0.35
+            self.seg_offset[i] = new_cur; self.seg_offset_v[i] = vel
+            if abs(new_cur - goal) > 0.005: still_active = True
 
         # ---- 卡片缩放 ----
         for i in range(n):
-            goal=1.03 if self.hover_card==i else 1.0
-            cur=self.card_scale.get(i,1.0); vel=self.card_scale_v.get(i,0.0)
-            cur2,vel2=spring_tick(cur,vel,goal,stiffness=0.22,damping=0.68)
-            if abs(cur2-goal)<0.002 and abs(vel2)<0.01: cur2=goal; vel2=0
-            self.card_scale[i]=cur2; self.card_scale_v[i]=vel2
+            goal = 1.025 if self.hover_card == i else 1.0
+            cur = self.card_scale.get(i, 1.0)
+            vel = self.card_scale_v.get(i, 0.0)
+            new_cur = cur + (goal - cur) * 0.35
+            if abs(new_cur - goal) < 0.002:
+                new_cur = goal; vel = 0
+            else: vel = (goal - cur) * 0.35
+            self.card_scale[i] = new_cur; self.card_scale_v[i] = vel
+            if abs(new_cur - goal) > 0.002: still_active = True
 
         # ---- 中央信息淡入淡出 ----
-        goal_a=1.0 if (self.hover_seg is not None and not getattr(self,'_enter_time',0)) else 0.0
-        cur_a=self.center_alpha; vel_a=self.center_alpha_v
-        cur_a2,vel_a2=spring_tick(cur_a,vel_a,goal_a,stiffness=0.30,damping=0.65)
-        self.center_alpha=cur_a2; self.center_alpha_v=vel_a2
+        goal_a = 1.0 if (self.hover_seg is not None and not enter_t) else 0.0
+        cur_a = self.center_alpha; vel_a = self.center_alpha_v
+        new_a = cur_a + (goal_a - cur_a) * 0.35
+        if abs(new_a - goal_a) < 0.005: new_a = goal_a; vel_a = 0
+        else: vel_a = (goal_a - cur_a) * 0.35
+        self.center_alpha = new_a; self.center_alpha_v = vel_a
+        if abs(new_a - goal_a) > 0.005: still_active = True
 
         # ---- 进度条平滑 ----
         for k in list(self.bar_goal.keys()):
-            cur=self.bar_cur.get(k,0); vel=self.bar_cur_v.get(k,0)
-            goal=self.bar_goal[k]
-            cur2,vel2=spring_tick(cur,vel,goal,stiffness=0.28,damping=0.66)
-            if abs(cur2-goal)<0.5: cur2=goal; vel2=0
-            self.bar_cur[k]=cur2; self.bar_cur_v[k]=vel2
-            # 渲染
+            cur = self.bar_cur.get(k, 0)
+            goal = self.bar_goal[k]
+            new_cur = cur + (goal - cur) * 0.35
+            if abs(new_cur - goal) < 1:
+                new_cur = goal
+            self.bar_cur[k] = new_cur; self.bar_cur_v[k] = (goal - cur) * 0.35
+            if abs(new_cur - goal) > 1: still_active = True
             try:
-                if k=='main' and hasattr(self,'prog_bar') and self.prog_bar.winfo_exists():
-                    self.prog_bar.config(width=int(cur2))
-                elif k=='sub' and hasattr(self,'prog_subbar') and self.prog_subbar.winfo_exists():
-                    self.prog_subbar.config(width=int(cur2))
+                if k == 'main' and hasattr(self, 'prog_bar') and self.prog_bar.winfo_exists():
+                    self.prog_bar.config(width=int(new_cur))
+                elif k == 'sub' and hasattr(self, 'prog_subbar') and self.prog_subbar.winfo_exists():
+                    self.prog_subbar.config(width=int(new_cur))
             except: pass
 
-        # 重绘
         self._draw_donut(); self._draw_cards()
 
-        # 判断是否还有动画活动
-        active = (getattr(self,'_enter_time',0)>0)
-        if not active:
-            for i in range(n):
-                if abs(self.seg_offset.get(i,0)-self.seg_offset_v.get(i,0))>0.001: active=True; break
-                if abs(self.card_scale.get(i,1.0)-1)>0.001: active=True; break
-            for v in self.bar_goal.values():
-                if abs(self.bar_cur.get('main',0)-v)>1: active=True; break
-        if active: self.root.after(16, self._animate)
-        else: self.anim_running=False
+        # 判定是否继续帧循环
+        if enter_t or still_active:
+            self.root.after(16, self._animate)
+        else:
+            self.anim_running = False
 
     # ==================== 扫描 ====================
     def do_scan(self):
@@ -548,13 +574,13 @@ class OffboardGUI:
             self.total_mb=sum(g['size_mb'] for g in self.groups)
             for g in self.groups: self.checked.setdefault(g['name'],True)
             self.scanning=False; self.scanbar.pack_forget()
-            # 重置动画并启动生长弧进入
+            # 重置动画状态（轻度入场，避免夸张）
             for i in range(len(self.groups)):
-                self.enter_grow[i]=0.0; self.enter_grow_v[i]=0.0
-                self.seg_offset[i]=0.0; self.seg_offset_v[i]=0.0
-                self.card_scale[i]=0.3; self.card_scale_v[i]=0.0
+                self.enter_grow[i]=0.0
+                self.seg_offset[i]=0.0
+                self.card_scale[i]=0.92          # 几乎全尺寸入场
             self._enter_time=time.time()
-            self.center_alpha=0.0; self.center_alpha_v=0.0
+            self.center_alpha=0.0
             self._start_anim()
             if not self.groups: self._toast('未发现可清理数据')
         elif kind=='kill_done':
