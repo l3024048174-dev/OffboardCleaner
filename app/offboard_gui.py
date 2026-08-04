@@ -85,6 +85,11 @@ class OffboardGUI:
         self.card_anim = {}        # 卡片当前放大系数
         self.scroll_y = 0
         self.anim_running = False
+        # 动画增强
+        self.enter_active = False  # 扫描完成进入动画
+        self.enter_start = 0      # 进入动画起始时间
+        self.center_alpha = 0.0   # 环形图中央信息淡入淡出
+        self.bar_target = {}      # 进度条目标宽度 {name: (cur, goal)}
 
         self.cx = 250; self.cy = 320
         self.r_o = 118; self.r_i = 66
@@ -236,12 +241,23 @@ class OffboardGUI:
             pts = donut_seg(self.cx, self.cy, ro * scale, ri * scale, start, end)
             c.create_polygon(pts, fill=col, outline=CARD, width=2,
                              tags=('seg', 'seg%d' % i))
-            # 中央总量
+            # 中央总量（带淡入淡出过渡到悬停信息）
             c.delete('center_total')
-            c.create_text(self.cx, self.cy - 12, text=core.fmt_size(total),
-                          fill=INK, font=FONT_T, tags='center_total')
-            c.create_text(self.cx, self.cy + 14, text='待清理数据总量',
-                          fill=INK3, font=FONT_S, tags='center_total')
+            c.delete('center_hover')
+            if self.center_alpha < 0.95:
+                fill_total = self._lerp_rgb(INK, PRIMARY, self.center_alpha * 0.6)
+                c.create_text(self.cx, self.cy - 12, text=core.fmt_size(total),
+                              fill=fill_total, font=FONT_T, tags='center_total')
+                c.create_text(self.cx, self.cy + 14, text='待清理数据总量',
+                              fill=INK3, font=FONT_S, tags='center_total')
+            if self.center_alpha > 0.05 and self.hover_seg is not None and self.hover_seg < n:
+                g = groups[self.hover_seg]
+                pct = max(1, round(g['size_mb'] / total * 100))
+                fill_hover = self._lerp_rgb(INK2, app_color(g['name']), self.center_alpha)
+                c.create_text(self.cx, self.cy - 8,
+                              text='%s\n%s · %d%%' % (g['name'], core.fmt_size(g['size_mb']), pct),
+                              fill=fill_hover, font=('Microsoft YaHei UI', 13, 'bold'),
+                              tags='center_hover')
             start = end
 
         # 图例
@@ -403,35 +419,103 @@ class OffboardGUI:
         self.q.put(('uninstall_done', app_name, result))
 
     # ================= 动画引擎 =================
+    def _ease_out(self, t):
+        """三次 ease-out 缓动曲线。"""
+        return 1 - pow(1 - t, 3)
+
+    def _lerp_rgb(self, c1, c2, a):
+        """RGB 线性插值（a=0→c1, a=1→c2）。c1/c2 为 '#RRGGBB' 字符串。"""
+        return '#%02X%02X%02X' % (
+            int(int(c1[1:3], 16) + (int(c2[1:3], 16) - int(c1[1:3], 16)) * a),
+            int(int(c1[3:5], 16) + (int(c2[3:5], 16) - int(c1[3:5], 16)) * a),
+            int(int(c1[5:7], 16) + (int(c2[5:7], 16) - int(c1[5:7], 16)) * a),
+        )
+
     def _start_anim(self):
         if not self.anim_running:
             self.anim_running = True
             self._animate()
 
     def _animate(self):
+        now = time.time()
         changed = False
         n = len(self.groups)
-        for i in range(n):
-            goal = 1.10 if self.hover_seg == i else 1.0
-            cur = self.seg_scale.get(i, 1.0)
-            nxt = cur + (goal - cur) * 0.25
-            if abs(nxt - goal) < 0.005:
+
+        # ---- 进入动画（扫描完成后扇形段+卡片弹入） ----
+        if self.enter_active:
+            elapsed = now - self.enter_start
+            all_done = True
+            for i in range(n):
+                delay = i * 0.07  # 逐段 70ms 延迟（stagger）
+                t = max(0.0, min(1.0, (elapsed - delay) / 0.5))  # 0.5s 持续
+                v = self._ease_out(t)
+                self.seg_scale[i] = 0.15 + v * 0.85  # 0.15→1.0 弹出
+                self.card_anim[i] = 0.15 + v * 0.85
+                if t < 1.0:
+                    all_done = False
+            if all_done:
+                self.enter_active = False
+            self.center_alpha = 0.0  # 进入期间保持总量显示
+            changed = True
+
+        # ---- 悬停放大（缓动曲线 + 恢复时减速） ----
+        if not self.enter_active:
+            for i in range(n):
+                goal_seg = 1.10 if self.hover_seg == i else 1.0
+                cur_seg = self.seg_scale.get(i, 1.0)
+                nxt_seg = goal_seg - (goal_seg - cur_seg) * 0.82
+                if abs(nxt_seg - goal_seg) < 0.004:
+                    nxt_seg = goal_seg
+                self.seg_scale[i] = nxt_seg
+                if abs(nxt_seg - goal_seg) > 0.0008:
+                    changed = True
+
+            for i in range(n):
+                goal_card = 1.06 if self.hover_card == i else 1.0
+                cur_card = self.card_anim.get(i, 1.0)
+                nxt_card = goal_card - (goal_card - cur_card) * 0.82
+                if abs(nxt_card - goal_card) < 0.004:
+                    nxt_card = goal_card
+                self.card_anim[i] = nxt_card
+                if abs(nxt_card - goal_card) > 0.0008:
+                    changed = True
+
+        # ---- 环形图中央信息淡入淡出 ----
+        goal_alpha = 1.0 if (self.hover_seg is not None and not self.enter_active) else 0.0
+        self.center_alpha += (goal_alpha - self.center_alpha) * 0.28
+        if abs(self.center_alpha - goal_alpha) > 0.004:
+            changed = True
+
+        # ---- 进度条平滑过渡 ----
+        bar_changed = False
+        for name in list(self.bar_target.keys()):
+            cur, goal = self.bar_target[name]
+            nxt = cur + (goal - cur) * 0.35
+            if abs(nxt - goal) < 1:
                 nxt = goal
-            self.seg_scale[i] = nxt
-            if abs(nxt - goal) > 0.001:
+            self.bar_target[name] = (nxt, goal)
+            if abs(nxt - goal) > 0.5:
+                bar_changed = True
                 changed = True
-        for i in range(n):
-            goal = 1.06 if self.hover_card == i else 1.0
-            cur = self.card_anim.get(i, 1.0)
-            nxt = cur + (goal - cur) * 0.25
-            if abs(nxt - goal) < 0.005:
-                nxt = goal
-            self.card_anim[i] = nxt
-            if abs(nxt - goal) > 0.001:
-                changed = True
+
         self._draw_donut()
         self._draw_cards()
-        if changed:
+
+        # 进度条平滑渲染
+        if 'main' in self.bar_target:
+            try:
+                if hasattr(self, 'prog_bar') and self.prog_bar.winfo_exists():
+                    self.prog_bar.config(width=int(self.bar_target['main'][0]))
+            except tk.TclError:
+                pass
+        if 'sub' in self.bar_target:
+            try:
+                if hasattr(self, 'prog_subbar') and self.prog_subbar.winfo_exists():
+                    self.prog_subbar.config(width=int(self.bar_target['sub'][0]))
+            except tk.TclError:
+                pass
+
+        if changed or bar_changed or self.enter_active:
             self.root.after(16, self._animate)
         else:
             self.anim_running = False
@@ -601,7 +685,14 @@ class OffboardGUI:
                 self.checked.setdefault(g['name'], True)
             self.scanning = False
             self.scanbar.pack_forget()
-            self._redraw_all()
+            # 触发进入动画
+            self.enter_active = True
+            self.enter_start = time.time()
+            for i in range(len(self.groups)):
+                self.seg_scale[i] = 0.15
+                self.card_anim[i] = 0.15
+            self.center_alpha = 0.0
+            self._start_anim()
             if not self.groups:
                 self._toast('未发现可清理的数据')
             else:
@@ -631,10 +722,13 @@ class OffboardGUI:
                 try:
                     cur, total, fcur, fall = msg[1], msg[2], msg[3], msg[4]
                     bw = int(400 * 0.6)
-                    self.prog_bar.config(width=int(bw * cur / total) if total else 0)
+                    self.bar_target['main'] = (self.bar_target.get('main', (0, 0))[0],
+                                               int(bw * cur / total) if total else 0)
                     self.prog_pct.config(text='%d%%' % (cur * 100 // total if total else 0))
                     if fall:
-                        self.prog_subbar.config(width=int(bw * fcur / fall))
+                        self.bar_target['sub'] = (self.bar_target.get('sub', (0, 0))[0],
+                                                  int(bw * fcur / fall))
+                    self._start_anim()
                 except tk.TclError:
                     pass
         elif kind == 'clean_done':
@@ -654,7 +748,7 @@ class OffboardGUI:
             pass
 
     def _toast(self, text):
-        """底部轻提示。"""
+        """底部轻提示（弹入动画）。"""
         try:
             if hasattr(self, '_toast_win') and self._toast_win.winfo_exists():
                 self._toast_win.destroy()
@@ -665,11 +759,35 @@ class OffboardGUI:
                      padx=18, pady=9).pack()
             w.update_idletasks()
             x = self.root.winfo_x() + (self.root.winfo_width() - w.winfo_width()) // 2
-            y = self.root.winfo_y() + self.root.winfo_height() - 70
-            w.geometry('+%d+%d' % (x, y))
+            base_y = self.root.winfo_y() + self.root.winfo_height() - 70
+            # 弹入动画：从 +30px 滑入
+            w.geometry('+%d+%d' % (x, base_y + 30))
             w.lift()
             self._toast_win = w
-            self.root.after(2800, lambda: w.destroy() if w.winfo_exists() else None)
+            self._animate_toast(w, base_y, 0)
+            self.root.after(2800, lambda: self._dismiss_toast(w))
+        except tk.TclError:
+            pass
+
+    def _animate_toast(self, w, target_y, step):
+        if not w.winfo_exists():
+            return
+        try:
+            current = w.winfo_y()
+            nxt = current + (target_y - current) * 0.35
+            if abs(nxt - target_y) < 1:
+                nxt = target_y
+            w.geometry('+%d+%d' % (w.winfo_x(), int(nxt)))
+            if abs(nxt - target_y) > 0.5:
+                w.after(16, lambda: self._animate_toast(w, target_y, step + 1))
+        except tk.TclError:
+            pass
+
+    def _dismiss_toast(self, w):
+        if not w.winfo_exists():
+            return
+        try:
+            w.destroy()
         except tk.TclError:
             pass
 
